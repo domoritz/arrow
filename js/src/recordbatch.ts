@@ -17,7 +17,7 @@
 
 import { Data } from './data';
 import { Table } from './table';
-import { Vector } from './vector';
+import { AbstractVector, Vector } from './vector';
 import { Visitor } from './visitor';
 import { Schema, Field } from './schema';
 import { isIterable } from './util/compat';
@@ -27,6 +27,7 @@ import { DataType, Struct, Dictionary } from './type';
 import { ensureSameLengthData } from './util/recordbatch';
 import { Clonable, Sliceable, Applicative } from './vector';
 import { StructVector, VectorBuilderOptions, VectorBuilderOptionsAsync } from './vector/index';
+import { Type } from './enum';
 
 type VectorMap = { [key: string]: Vector };
 type Fields<T extends { [key: string]: DataType }> = (keyof T)[] | Field<T[keyof T]>[];
@@ -39,8 +40,8 @@ export interface RecordBatch<T extends { [key: string]: DataType } = any> {
 }
 
 export class RecordBatch<T extends { [key: string]: DataType } = any>
-    extends StructVector<T>
-    implements Clonable<RecordBatch<T>>,
+    implements AbstractVector<any>,
+               Clonable<RecordBatch<T>>,
                Sliceable<RecordBatch<T>>,
                Applicative<Struct<T>, Table<T>> {
 
@@ -67,6 +68,7 @@ export class RecordBatch<T extends { [key: string]: DataType } = any>
     protected _dictionaries?: Map<number, Vector>;
 
     constructor(schema: Schema<T>, length: number, children: (Data | Vector)[]);
+
     constructor(schema: Schema<T>, data: Data<Struct<T>>, children?: Vector[]);
     constructor(...args: any[]) {
         let data: Data<Struct<T>>;
@@ -91,6 +93,17 @@ export class RecordBatch<T extends { [key: string]: DataType } = any>
         const schema = this._schema, chunks = Chunked.flatten(this, ...others);
         return new Table(schema, chunks.map(({ data }) => new RecordBatch(schema, data)));
     }
+
+    public get type() { return this.data.type; }
+    public get typeId() { return this.data.typeId; }
+    public get length() { return this.data.length; }
+    public get offset() { return this.data.offset; }
+    public get stride() { return this.data.stride; }
+
+    public get nullCount() { return this.data.nullCount; }
+    public get byteLength() { return this.data.byteLength; }
+
+    public get numChildren() { return this._schema.fields.length; }
 
     public get schema() { return this._schema; }
     public get numCols() { return this._schema.fields.length; }
