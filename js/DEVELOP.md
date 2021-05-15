@@ -63,6 +63,9 @@ Examples:
 
 This argument configuration also applies to `clean` and `test` scripts.
 
+To run tests on the bundles, you need to build them first.
+To run tests directly on the sources without bundling, use the `src` target (e.g. `yarn test -t src`).
+
 * `yarn deploy`
 
 Uses [lerna](https://github.com/lerna/lerna) to publish each build target to npm with [conventional](https://conventionalcommits.org/) [changelogs](https://github.com/conventional-changelog/conventional-changelog/tree/master/packages/conventional-changelog-cli).
@@ -99,8 +102,6 @@ Uses [lerna](https://github.com/lerna/lerna) to publish each build target to npm
     sed -i '+s+./flatbuffers+flatbuffers+ig' *_generated.ts
     # Fix the Union createTypeIdsVector typings
     sed -i -r '+s+static createTypeIdsVector\(builder: flatbuffers.Builder, data: number\[\] \| Uint8Array+static createTypeIdsVector\(builder: flatbuffers.Builder, data: number\[\] \| Int32Array+ig' Schema_generated.ts
-    # Add `/* tslint:disable:class-name */` to the top of `Schema.ts`
-    echo -e '/* tslint:disable:class-name */\n' | cat - Schema_generated.ts > Schema1.ts && mv Schema1.ts Schema_generated.ts
     # Remove "_generated" suffix from TS files
     mv File{_generated,}.ts && mv Schema{_generated,}.ts && mv Message{_generated,}.ts
     ```

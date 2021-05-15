@@ -15,7 +15,6 @@
 # specific language governing permissions and limitations
 # under the License.
 
-context("RecordBatch")
 
 test_that("RecordBatch", {
   # Note that we're reusing `tbl` and `batch` throughout the tests in this file
@@ -155,9 +154,9 @@ test_that("[ on RecordBatch", {
 })
 
 test_that("[[ and $ on RecordBatch", {
-  expect_vector(batch[["int"]], tbl$int)
-  expect_vector(batch$int, tbl$int)
-  expect_vector(batch[[4]], tbl$chr)
+  expect_as_vector(batch[["int"]], tbl$int)
+  expect_as_vector(batch$int, tbl$int)
+  expect_as_vector(batch[[4]], tbl$chr)
   expect_null(batch$qwerty)
   expect_null(batch[["asdf"]])
   expect_error(batch[[c(4, 3)]])
@@ -190,16 +189,16 @@ test_that("[[<- assignment", {
 
   # can replace a column by index
   batch[[2]] <- as.numeric(10:1)
-  expect_vector(batch[[2]], as.numeric(10:1))
+  expect_as_vector(batch[[2]], as.numeric(10:1))
 
   # can add a column by index
   batch[[5]] <- as.numeric(10:1)
-  expect_vector(batch[[5]], as.numeric(10:1))
-  expect_vector(batch[["5"]], as.numeric(10:1))
+  expect_as_vector(batch[[5]], as.numeric(10:1))
+  expect_as_vector(batch[["5"]], as.numeric(10:1))
 
   # can replace a column
   batch[["int"]] <- 10:1
-  expect_vector(batch[["int"]], 10:1)
+  expect_as_vector(batch[["int"]], 10:1)
 
   # can use $
   batch$new <- NULL
@@ -207,11 +206,11 @@ test_that("[[<- assignment", {
   expect_identical(dim(batch), c(10L, 4L))
 
   batch$int <- 1:10
-  expect_vector(batch$int, 1:10)
+  expect_as_vector(batch$int, 1:10)
 
   # recycling
   batch[["atom"]] <- 1L
-  expect_vector(batch[["atom"]], rep(1L, 10))
+  expect_as_vector(batch[["atom"]], rep(1L, 10))
 
   expect_error(
     batch[["atom"]] <- 1:6,
@@ -221,7 +220,7 @@ test_that("[[<- assignment", {
   # assign Arrow array
   array <- Array$create(c(10:1))
   batch$array <- array
-  expect_vector(batch$array, 10:1)
+  expect_as_vector(batch$array, 10:1)
 
   # nonsense indexes
   expect_error(batch[[NA]] <- letters[10:1], "'i' must be character or numeric, not logical")
@@ -438,8 +437,8 @@ test_that("RecordBatch$Equals(check_metadata)", {
   rb1 <- record_batch(df)
   rb2 <- record_batch(df, schema = rb1$schema$WithMetadata(list(some="metadata")))
 
-  expect_is(rb1, "RecordBatch")
-  expect_is(rb2, "RecordBatch")
+  expect_r6_class(rb1, "RecordBatch")
+  expect_r6_class(rb2, "RecordBatch")
   expect_false(rb1$schema$HasMetadata)
   expect_true(rb2$schema$HasMetadata)
   expect_identical(rb2$schema$metadata, list(some = "metadata"))
@@ -498,4 +497,22 @@ test_that("Handling string data with embedded nuls", {
       fixed = TRUE
     )
   })
+})
+
+test_that("ARROW-11769 - grouping preserved in record batch creation", {
+  
+  tbl <- tibble::tibble(
+    int = 1:10,
+    fct = factor(rep(c("A", "B"), 5)),
+    fct2 = factor(rep(c("C", "D"), each = 5)),
+  )
+  
+  expect_identical(
+    tbl %>%
+      dplyr::group_by(fct, fct2) %>%
+      record_batch() %>%
+      dplyr::group_vars(),
+    c("fct", "fct2")
+  )
+  
 })

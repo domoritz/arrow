@@ -97,6 +97,14 @@ cdef class Statistics(_Weakrefable):
         return self.statistics.get().HasMinMax()
 
     @property
+    def has_null_count(self):
+        return self.statistics.get().HasNullCount()
+
+    @property
+    def has_distinct_count(self):
+        return self.statistics.get().HasDistinctCount()
+
+    @property
     def min_raw(self):
         if self.has_min_max:
             return _cast_statistic_raw_min(self.statistics.get())
@@ -919,9 +927,9 @@ cdef class ParquetReader(_Weakrefable):
         self.pool = maybe_unbox_memory_pool(memory_pool)
         self._metadata = None
 
-    def open(self, object source, bint use_memory_map=True,
+    def open(self, object source not None, bint use_memory_map=True,
              read_dictionary=None, FileMetaData metadata=None,
-             int buffer_size=0):
+             int buffer_size=0, bint pre_buffer=False):
         cdef:
             shared_ptr[CRandomAccessFile] rd_handle
             shared_ptr[CFileMetaData] c_metadata
@@ -941,6 +949,8 @@ cdef class ParquetReader(_Weakrefable):
             properties.disable_buffered_stream()
         else:
             raise ValueError('Buffer size must be larger than zero')
+
+        arrow_props.set_pre_buffer(pre_buffer)
 
         self.source = source
 
