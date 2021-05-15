@@ -68,7 +68,7 @@ class RecordBatchWriterDuplex<T extends { [key: string]: DataType } = any> exten
             }
             if (!this.push(r.value) || size <= 0) { break; }
         }
-        if ((r && r.done || !this.readable)) {
+        if ((r?.done || !this.readable)) {
             this.push(null);
             await reader.cancel();
         }

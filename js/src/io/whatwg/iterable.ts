@@ -37,7 +37,7 @@ function iterableAsReadableDOMStream<T>(source: Iterable<T>, options?: ReadableD
 
     let it: SourceIterator<T> | null = null;
     const bm = (options && options.type === 'bytes') || false;
-    const hwm = options && options.highWaterMark || (2 ** 24);
+    const hwm = options?.highWaterMark || (2 ** 24);
 
     return new ReadableStream<T>({
         ...options as any,
@@ -67,13 +67,13 @@ function asyncIterableAsReadableDOMStream<T>(source: AsyncIterable<T>, options?:
 
     let it: AsyncSourceIterator<T> | null = null;
     const bm = (options && options.type === 'bytes') || false;
-    const hwm = options && options.highWaterMark || (2 ** 24);
+    const hwm = options?.highWaterMark || (2 ** 24);
 
     return new ReadableStream<T>({
         ...options as any,
         async start(controller) { await next(controller, it || (it = source[Symbol.asyncIterator]() as AsyncSourceIterator<T>)); },
         async pull(controller) { it ? (await next(controller, it)) : controller.close(); },
-        async cancel() { (it && (it.return && await it.return()) || true) && (it = null); },
+        async cancel() { (it && (it.return && (await it.return())) || true) && (it = null); },
     }, { highWaterMark: bm ? hwm : undefined, ...options });
 
     async function next(controller: ReadableStreamDefaultController<T>, it: AsyncSourceIterator<T>) {
