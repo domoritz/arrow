@@ -17,6 +17,8 @@
 
 #include "arrow/testing/random.h"
 
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -24,8 +26,6 @@
 #include <random>
 #include <type_traits>
 #include <vector>
-
-#include <gtest/gtest.h>
 
 #include "arrow/array.h"
 #include "arrow/array/builder_decimal.h"
@@ -41,6 +41,7 @@
 #include "arrow/util/decimal.h"
 #include "arrow/util/key_value_metadata.h"
 #include "arrow/util/logging.h"
+#include "arrow/util/pcg_random.h"
 #include "arrow/util/value_parsing.h"
 
 namespace arrow {
@@ -79,9 +80,9 @@ struct GenerateOptions {
       GenerateTypedDataNoNan(data, n);
       return;
     }
-    std::default_random_engine rng(seed_++);
+    pcg32_fast rng(seed_++);
     DistributionType dist(min_, max_);
-    std::bernoulli_distribution nan_dist(nan_probability_);
+    ::arrow::random::bernoulli_distribution nan_dist(nan_probability_);
     const ValueType nan_value = std::numeric_limits<ValueType>::quiet_NaN();
 
     // A static cast is required due to the int16 -> int8 handling.
@@ -91,7 +92,7 @@ struct GenerateOptions {
   }
 
   void GenerateTypedDataNoNan(ValueType* data, size_t n) {
-    std::default_random_engine rng(seed_++);
+    pcg32_fast rng(seed_++);
     DistributionType dist(min_, max_);
 
     // A static cast is required due to the int16 -> int8 handling.
@@ -100,8 +101,8 @@ struct GenerateOptions {
 
   void GenerateBitmap(uint8_t* buffer, size_t n, int64_t* null_count) {
     int64_t count = 0;
-    std::default_random_engine rng(seed_++);
-    std::bernoulli_distribution dist(1.0 - probability_);
+    pcg32_fast rng(seed_++);
+    ::arrow::random::bernoulli_distribution dist(1.0 - probability_);
 
     for (size_t i = 0; i < n; i++) {
       if (dist(rng)) {
@@ -210,7 +211,8 @@ PRIMITIVE_RAND_INTEGER_IMPL(Float16, int16_t, HalfFloatType)
 std::shared_ptr<Array> RandomArrayGenerator::Float32(int64_t size, float min, float max,
                                                      double null_probability,
                                                      double nan_probability) {
-  using OptionType = GenerateOptions<float, std::uniform_real_distribution<float>>;
+  using OptionType =
+      GenerateOptions<float, ::arrow::random::uniform_real_distribution<float>>;
   OptionType options(seed(), min, max, null_probability, nan_probability);
   return GenerateNumericArray<FloatType, OptionType>(size, options);
 }
@@ -218,7 +220,8 @@ std::shared_ptr<Array> RandomArrayGenerator::Float32(int64_t size, float min, fl
 std::shared_ptr<Array> RandomArrayGenerator::Float64(int64_t size, double min, double max,
                                                      double null_probability,
                                                      double nan_probability) {
-  using OptionType = GenerateOptions<double, std::uniform_real_distribution<double>>;
+  using OptionType =
+      GenerateOptions<double, ::arrow::random::uniform_real_distribution<double>>;
   OptionType options(seed(), min, max, null_probability, nan_probability);
   return GenerateNumericArray<DoubleType, OptionType>(size, options);
 }
@@ -502,6 +505,17 @@ std::shared_ptr<Array> RandomArrayGenerator::List(const Array& values, int64_t s
                          static_cast<int32_t>(values.offset() + values.length()),
                          null_probability, force_empty_nulls);
   return *::arrow::ListArray::FromArrays(*offsets, values);
+}
+
+std::shared_ptr<Array> RandomArrayGenerator::Map(const std::shared_ptr<Array>& keys,
+                                                 const std::shared_ptr<Array>& items,
+                                                 int64_t size, double null_probability,
+                                                 bool force_empty_nulls) {
+  DCHECK_EQ(keys->length(), items->length());
+  auto offsets = Offsets(size + 1, static_cast<int32_t>(keys->offset()),
+                         static_cast<int32_t>(keys->offset() + keys->length()),
+                         null_probability, force_empty_nulls);
+  return *::arrow::MapArray::FromArrays(offsets, keys, items);
 }
 
 std::shared_ptr<Array> RandomArrayGenerator::SparseUnion(const ArrayVector& fields,

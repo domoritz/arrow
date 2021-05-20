@@ -29,6 +29,7 @@
 #include "arrow/ipc/writer.h"
 #include "arrow/util/checked_cast.h"
 #include "arrow/util/iterator.h"
+#include "arrow/util/logging.h"
 
 namespace arrow {
 
@@ -58,6 +59,21 @@ static inline Result<std::shared_ptr<ipc::RecordBatchFileReader>> OpenReader(
   return reader;
 }
 
+static inline Future<std::shared_ptr<ipc::RecordBatchFileReader>> OpenReaderAsync(
+    const FileSource& source,
+    const ipc::IpcReadOptions& options = default_read_options()) {
+  ARROW_ASSIGN_OR_RAISE(auto input, source.Open());
+  auto path = source.path();
+  return ipc::RecordBatchFileReader::OpenAsync(std::move(input), options)
+      .Then([](const std::shared_ptr<ipc::RecordBatchFileReader>& reader)
+                -> Result<std::shared_ptr<ipc::RecordBatchFileReader>> { return reader; },
+            [path](const Status& status)
+                -> Result<std::shared_ptr<ipc::RecordBatchFileReader>> {
+              return status.WithMessage("Could not open IPC input source '", path,
+                                        "': ", status.message());
+            });
+}
+
 static inline Result<std::vector<int>> GetIncludedFields(
     const Schema& schema, const std::vector<std::string>& materialized_fields) {
   std::vector<int> included_fields;
@@ -72,6 +88,26 @@ static inline Result<std::vector<int>> GetIncludedFields(
   return included_fields;
 }
 
+static inline Result<ipc::IpcReadOptions> GetReadOptions(
+    const Schema& schema, const FileFormat& format, const ScanOptions& scan_options) {
+  ARROW_ASSIGN_OR_RAISE(
+      auto ipc_scan_options,
+      GetFragmentScanOptions<IpcFragmentScanOptions>(
+          kIpcTypeName, &scan_options, format.default_fragment_scan_options));
+  auto options =
+      ipc_scan_options->options ? *ipc_scan_options->options : default_read_options();
+  options.memory_pool = scan_options.pool;
+  if (!options.included_fields.empty()) {
+    // Cannot set them here
+    ARROW_LOG(WARNING) << "IpcFragmentScanOptions.options->included_fields was set "
+                          "but will be ignored; included_fields are derived from "
+                          "fields referenced by the scan";
+  }
+  ARROW_ASSIGN_OR_RAISE(options.included_fields,
+                        GetIncludedFields(schema, scan_options.MaterializedFields()));
+  return options;
+}
+
 /// \brief A ScanTask backed by an Ipc file.
 class IpcScanTask : public ScanTask {
  public:
@@ -81,16 +117,12 @@ class IpcScanTask : public ScanTask {
 
   Result<RecordBatchIterator> Execute() override {
     struct Impl {
-      static Result<RecordBatchIterator> Make(
-          const FileSource& source, std::vector<std::string> materialized_fields,
-          MemoryPool* pool) {
+      static Result<RecordBatchIterator> Make(const FileSource& source,
+                                              const FileFormat& format,
+                                              const ScanOptions& scan_options) {
         ARROW_ASSIGN_OR_RAISE(auto reader, OpenReader(source));
-
-        auto options = default_read_options();
-        options.memory_pool = pool;
-        ARROW_ASSIGN_OR_RAISE(options.included_fields,
-                              GetIncludedFields(*reader->schema(), materialized_fields));
-
+        ARROW_ASSIGN_OR_RAISE(auto options,
+                              GetReadOptions(*reader->schema(), format, scan_options));
         ARROW_ASSIGN_OR_RAISE(reader, OpenReader(source, options));
         return RecordBatchIterator(Impl{std::move(reader), 0});
       }
@@ -107,7 +139,9 @@ class IpcScanTask : public ScanTask {
       int i_;
     };
 
-    return Impl::Make(source_, options_->MaterializedFields(), options_->pool);
+    return Impl::Make(source_,
+                      *internal::checked_pointer_cast<FileFragment>(fragment_)->format(),
+                      *options_);
   }
 
  private:
@@ -152,9 +186,61 @@ Result<std::shared_ptr<Schema>> IpcFileFormat::Inspect(const FileSource& source)
 }
 
 Result<ScanTaskIterator> IpcFileFormat::ScanFile(
-    std::shared_ptr<ScanOptions> options,
+    const std::shared_ptr<ScanOptions>& options,
     const std::shared_ptr<FileFragment>& fragment) const {
-  return IpcScanTaskIterator::Make(std::move(options), std::move(fragment));
+  return IpcScanTaskIterator::Make(options, fragment);
+}
+
+Result<RecordBatchGenerator> IpcFileFormat::ScanBatchesAsync(
+    const std::shared_ptr<ScanOptions>& options,
+    const std::shared_ptr<FileFragment>& file) const {
+  auto self = shared_from_this();
+  auto source = file->source();
+  auto open_reader = OpenReaderAsync(source);
+  auto reopen_reader = [self, options,
+                        source](std::shared_ptr<ipc::RecordBatchFileReader> reader)
+      -> Future<std::shared_ptr<ipc::RecordBatchFileReader>> {
+    ARROW_ASSIGN_OR_RAISE(auto options,
+                          GetReadOptions(*reader->schema(), *self, *options));
+    return OpenReader(source, options);
+  };
+  auto readahead_level = options->batch_readahead;
+  auto default_fragment_scan_options = this->default_fragment_scan_options;
+  auto open_generator = [=](const std::shared_ptr<ipc::RecordBatchFileReader>& reader)
+      -> Result<RecordBatchGenerator> {
+    ARROW_ASSIGN_OR_RAISE(
+        auto ipc_scan_options,
+        GetFragmentScanOptions<IpcFragmentScanOptions>(kIpcTypeName, options.get(),
+                                                       default_fragment_scan_options));
+
+    RecordBatchGenerator generator;
+    if (ipc_scan_options->cache_options) {
+      // Transferring helps performance when coalescing
+      ARROW_ASSIGN_OR_RAISE(
+          generator, reader->GetRecordBatchGenerator(
+                         /*coalesce=*/true, options->io_context,
+                         *ipc_scan_options->cache_options, internal::GetCpuThreadPool()));
+    } else {
+      ARROW_ASSIGN_OR_RAISE(generator, reader->GetRecordBatchGenerator(
+                                           /*coalesce=*/false, options->io_context));
+    }
+    return MakeReadaheadGenerator(std::move(generator), readahead_level);
+  };
+  return MakeFromFuture(open_reader.Then(reopen_reader).Then(open_generator));
+}
+
+Future<util::optional<int64_t>> IpcFileFormat::CountRows(
+    const std::shared_ptr<FileFragment>& file, compute::Expression predicate,
+    std::shared_ptr<ScanOptions> options) {
+  if (ExpressionHasFieldRefs(predicate)) {
+    return Future<util::optional<int64_t>>::MakeFinished(util::nullopt);
+  }
+  auto self = internal::checked_pointer_cast<IpcFileFormat>(shared_from_this());
+  return DeferNotOk(options->io_context.executor()->Submit(
+      [self, file]() -> Result<util::optional<int64_t>> {
+        ARROW_ASSIGN_OR_RAISE(auto reader, OpenReader(file->source()));
+        return reader->CountRows();
+      }));
 }
 
 //

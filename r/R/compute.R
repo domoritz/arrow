@@ -27,6 +27,8 @@
 #' `RecordBatch`, or `Table`.
 #' @param args list arguments as an alternative to specifying in `...`
 #' @param options named list of C++ function options.
+#' @details When passing indices in `...`, `args`, or `options`, express them as
+#' 0-based integers (consistent with C++).
 #' @return An `Array`, `ChunkedArray`, `Scalar`, `RecordBatch`, or `Table`, whatever the compute function results in.
 #' @seealso [Arrow C++ documentation](https://arrow.apache.org/docs/cpp/compute.html) for the functions and their respective options.
 #' @examples
@@ -184,6 +186,35 @@ median.ArrowDatum <- function(x, na.rm = FALSE, ...) {
 #' @export
 unique.ArrowDatum <- function(x, incomparables = FALSE, ...) {
   call_function("unique", x)
+}
+
+#' @export
+any.ArrowDatum <- function(..., na.rm = FALSE){
+  
+  a <- collect_arrays_from_dots(list(...))
+  result <- call_function("any", a)
+
+  if (!na.rm && a$null_count > 0 && !as.vector(result)) {
+    # Three-valued logic: with na.rm = FALSE, any(c(TRUE, NA)) returns TRUE but any(c(FALSE, NA)) returns NA
+    # TODO: C++ library should take na.rm for any/all (like ARROW-9054)
+    Scalar$create(NA)
+  } else {
+    result
+  }
+}
+
+#' @export
+all.ArrowDatum <- function(..., na.rm = FALSE){
+  
+  a <- collect_arrays_from_dots(list(...))
+  result <- call_function("all", a)
+  
+  if (!na.rm && a$null_count > 0 && as.vector(result)) {
+    # See comment above in any() about three-valued logic
+    Scalar$create(NA)
+  } else {
+    result
+  }
 }
 
 #' `match` and `%in%` for Arrow objects

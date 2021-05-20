@@ -25,6 +25,7 @@
 #include <random>
 #include <vector>
 
+#include "arrow/testing/uniform_real.h"
 #include "arrow/testing/visibility.h"
 #include "arrow/type.h"
 
@@ -321,6 +322,19 @@ class ARROW_TESTING_EXPORT RandomArrayGenerator {
   std::shared_ptr<Array> List(const Array& values, int64_t size, double null_probability,
                               bool force_empty_nulls = false);
 
+  /// \brief Generate a random MapArray
+  ///
+  /// \param[in] keys The underlying keys array
+  /// \param[in] items The underlying items array
+  /// \param[in] size The size of the generated map array
+  /// \param[in] null_probability the probability of a map value being null
+  /// \param[in] force_empty_nulls if true, null map entries must have 0 length
+  ///
+  /// \return a generated Array
+  std::shared_ptr<Array> Map(const std::shared_ptr<Array>& keys,
+                             const std::shared_ptr<Array>& items, int64_t size,
+                             double null_probability, bool force_empty_nulls = false);
+
   /// \brief Generate a random SparseUnionArray
   ///
   /// The type ids are chosen randomly, according to a uniform distribution,
@@ -442,7 +456,7 @@ template <typename T, typename U>
 void random_real(int64_t n, uint32_t seed, T min_value, T max_value,
                  std::vector<U>* out) {
   std::default_random_engine gen(seed);
-  std::uniform_real_distribution<T> d(min_value, max_value);
+  ::arrow::random::uniform_real_distribution<T> d(min_value, max_value);
   out->resize(n, static_cast<T>(0));
   std::generate(out->begin(), out->end(), [&d, &gen] { return static_cast<U>(d(gen)); });
 }

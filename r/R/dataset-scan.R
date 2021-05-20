@@ -56,7 +56,9 @@
 Scanner <- R6Class("Scanner", inherit = ArrowObject,
   public = list(
     ToTable = function() dataset___Scanner__ToTable(self),
-    Scan = function() dataset___Scanner__Scan(self)
+    ScanBatches = function() dataset___Scanner__ScanBatches(self),
+    ToRecordBatchReader = function() dataset___Scanner__ToRecordBatchReader(self),
+    CountRows = function() dataset___Scanner__CountRows(self)
   ),
   active = list(
     schema = function() dataset___Scanner__schema(self)
@@ -142,17 +144,12 @@ map_batches <- function(X, FUN, ..., .data.frame = TRUE) {
   scanner <- Scanner$create(ensure_group_vars(X))
   FUN <- as_mapper(FUN)
   # message("Making ScanTasks")
-  lapply(scanner$Scan(), function(scan_task) {
-    # This outer lapply could be parallelized
-    # message("Making Batches")
-    lapply(scan_task$Execute(), function(batch) {
-      # message("Processing Batch")
-      # This inner lapply cannot be parallelized
-      # TODO: wrap batch in arrow_dplyr_query with X$selected_columns,
-      # X$temp_columns, and X$group_by_vars
-      # if X is arrow_dplyr_query, if some other arg (.dplyr?) == TRUE
-      FUN(batch, ...)
-    })
+  lapply(scanner$ScanBatches(), function(batch) {
+    # message("Processing Batch")
+    # TODO: wrap batch in arrow_dplyr_query with X$selected_columns,
+    # X$temp_columns, and X$group_by_vars
+    # if X is arrow_dplyr_query, if some other arg (.dplyr?) == TRUE
+    FUN(batch, ...)
   })
 }
 
@@ -166,16 +163,12 @@ ScannerBuilder <- R6Class("ScannerBuilder", inherit = ArrowObject,
       # cols is either a character vector or a named list of Expressions
       if (is.character(cols)) {
         dataset___ScannerBuilder__ProjectNames(self, cols)
+      } else if (length(cols) == 0) {
+        # Empty projection
+        dataset___ScannerBuilder__ProjectNames(self, character(0))
       } else {
-        # If we have expressions, but they all turn out to be field_refs,
-        # we can still call the simple method
-        field_names <- get_field_names(cols)
-        if (all(nzchar(field_names))) {
-          dataset___ScannerBuilder__ProjectNames(self, field_names)
-        } else {
-          # Else, we are projecting/mutating
-          dataset___ScannerBuilder__ProjectExprs(self, cols, names(cols))
-        }
+        # List of Expressions
+        dataset___ScannerBuilder__ProjectExprs(self, cols, names(cols))
       }
       self
     },

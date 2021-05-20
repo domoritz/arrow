@@ -212,21 +212,30 @@ find_available_binary <- function(os) {
 download_source <- function() {
   tf1 <- tempfile()
   src_dir <- tempfile()
-  if (bintray_download(tf1)) {
-    # First try from bintray
-    cat("*** Successfully retrieved C++ source\n")
-    unzip(tf1, exdir = src_dir)
-    unlink(tf1)
-    src_dir <- paste0(src_dir, "/cpp")
-  } else if (apache_download(tf1)) {
-    # If that fails, try for an official release
-    cat("*** Successfully retrieved C++ source\n")
-    untar(tf1, exdir = src_dir)
-    unlink(tf1)
-    src_dir <- paste0(src_dir, "/apache-arrow-", VERSION, "/cpp")
+
+  # Given VERSION as x.y.z.p
+  p <- package_version(VERSION)[1, 4]
+  if (is.na(p) || p < 1000) {
+    # This is either just x.y.z or it has a small (R-only) patch version
+    # Download from the official Apache release, dropping the p
+    VERSION <- as.character(package_version(VERSION)[1, -4])
+    if (apache_download(VERSION, tf1)) {
+      untar(tf1, exdir = src_dir)
+      unlink(tf1)
+      src_dir <- paste0(src_dir, "/apache-arrow-", VERSION, "/cpp")
+    }
+  } else if (p != 9000) {
+    # This is a custom dev version (x.y.z.9999) or a nightly (x.y.z.20210505)
+    # (Don't try to download on the default dev .9000 version)
+    if (nightly_download(VERSION, tf1)) {
+      unzip(tf1, exdir = src_dir)
+      unlink(tf1)
+      src_dir <- paste0(src_dir, "/cpp")
+    }
   }
 
   if (dir.exists(src_dir)) {
+    cat("*** Successfully retrieved C++ source\n")
     options(.arrow.cleanup = c(getOption(".arrow.cleanup"), src_dir))
     # These scripts need to be executable
     system(
@@ -239,13 +248,13 @@ download_source <- function() {
   }
 }
 
-bintray_download <- function(destfile) {
-  source_url <- paste0(arrow_repo, "src/arrow-", VERSION, ".zip")
+nightly_download <- function(version, destfile) {
+  source_url <- paste0(arrow_repo, "src/arrow-", version, ".zip")
   try_download(source_url, destfile)
 }
 
-apache_download <- function(destfile, n_mirrors = 3) {
-  apache_path <- paste0("arrow/arrow-", VERSION, "/apache-arrow-", VERSION, ".tar.gz")
+apache_download <- function(version, destfile, n_mirrors = 3) {
+  apache_path <- paste0("arrow/arrow-", version, "/apache-arrow-", version, ".tar.gz")
   apache_urls <- c(
     # This returns a different mirror each time
     rep("https://www.apache.org/dyn/closer.lua?action=download&filename=", n_mirrors),
@@ -261,7 +270,7 @@ apache_download <- function(destfile, n_mirrors = 3) {
   downloaded
 }
 
-find_local_source <- function(arrow_home = Sys.getenv("ARROW_HOME", "..")) {
+find_local_source <- function(arrow_home = Sys.getenv("ARROW_SOURCE_HOME", "..")) {
   if (file.exists(paste0(arrow_home, "/cpp/src/arrow/api.h"))) {
     # We're in a git checkout of arrow, so we can build it
     cat("*** Found local C++ source\n")
@@ -333,10 +342,10 @@ build_libarrow <- function(src_dir, dst_dir) {
     env_vars <- paste(env_vars, "ARROW_JEMALLOC=OFF ARROW_PARQUET=OFF ARROW_DATASET=OFF ARROW_WITH_RE2=OFF ARROW_WITH_UTF8PROC=OFF EXTRA_CMAKE_FLAGS=-DARROW_SIMD_LEVEL=NONE")
   }
   cat("**** arrow", ifelse(quietly, "", paste("with", env_vars)), "\n")
-  status <- system(
+  status <- suppressWarnings(system(
     paste(env_vars, "inst/build_arrow_static.sh"),
     ignore.stdout = quietly, ignore.stderr = quietly
-  )
+  ))
   if (status != 0) {
     # It failed :(
     cat("**** Error building Arrow C++. Re-run with ARROW_R_DEV=true for debug information.\n")

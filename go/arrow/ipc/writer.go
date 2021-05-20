@@ -316,6 +316,15 @@ func (w *recordEncoder) visit(p *Payload, arr array.Interface) error {
 		return errBigArray
 	}
 
+	if arr.DataType().ID() == arrow.EXTENSION {
+		arr := arr.(array.ExtensionArray)
+		err := w.visit(p, arr.Storage())
+		if err != nil {
+			return xerrors.Errorf("failed visiting storage of for array %T: %w", arr, err)
+		}
+		return nil
+	}
+
 	// add all common elements
 	w.fields = append(w.fields, fieldMetadata{
 		Len:    int64(arr.Len()),
@@ -449,6 +458,43 @@ func (w *recordEncoder) visit(p *Payload, arr array.Interface) error {
 		}
 		w.depth++
 
+	case *arrow.MapType:
+		arr := arr.(*array.Map)
+		voffsets, err := w.getZeroBasedValueOffsets(arr)
+		if err != nil {
+			return xerrors.Errorf("could not retrieve zero-based value offsets for array %T: %w", arr, err)
+		}
+		p.body = append(p.body, voffsets)
+
+		w.depth--
+		var (
+			values        = arr.ListValues()
+			mustRelease   = false
+			values_offset int64
+			values_length int64
+		)
+		defer func() {
+			if mustRelease {
+				values.Release()
+			}
+		}()
+
+		if voffsets != nil {
+			values_offset = int64(arr.Offsets()[0])
+			values_length = int64(arr.Offsets()[arr.Len()]) - values_offset
+		}
+
+		if len(arr.Offsets()) != 0 || values_length < int64(values.Len()) {
+			// must also slice the values
+			values = array.NewSlice(values, values_offset, values_length)
+			mustRelease = true
+		}
+		err = w.visit(p, values)
+
+		if err != nil {
+			return xerrors.Errorf("could not visit list element for array %T: %w", arr, err)
+		}
+		w.depth++
 	case *arrow.ListType:
 		arr := arr.(*array.List)
 		voffsets, err := w.getZeroBasedValueOffsets(arr)

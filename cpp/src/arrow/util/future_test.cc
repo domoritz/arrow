@@ -261,21 +261,17 @@ TEST(FutureSyncTest, Empty) {
     // MakeFinished()
     auto fut = Future<>::MakeFinished();
     AssertSuccessful(fut);
-    auto res = fut.result();
-    ASSERT_OK(res);
-    res = std::move(fut.result());
-    ASSERT_OK(res);
   }
   {
     // MarkFinished(Status)
     auto fut = Future<>::Make();
     AssertNotFinished(fut);
-    fut.MarkFinished(Status::OK());
+    fut.MarkFinished();
     AssertSuccessful(fut);
   }
   {
     // MakeFinished(Status)
-    auto fut = Future<>::MakeFinished(Status::OK());
+    auto fut = Future<>::MakeFinished();
     AssertSuccessful(fut);
     fut = Future<>::MakeFinished(Status::IOError("xxx"));
     AssertFailed(fut);
@@ -352,8 +348,7 @@ TEST(FutureRefTest, ChainRemoved) {
   std::weak_ptr<FutureImpl> ref2;
   {
     auto fut = Future<>::Make();
-    auto fut2 =
-        fut.Then([](const Result<detail::Empty>& status) { return Status::OK(); });
+    auto fut2 = fut.Then([]() { return Status::OK(); });
     ref = fut.impl_;
     ref2 = fut2.impl_;
   }
@@ -362,7 +357,7 @@ TEST(FutureRefTest, ChainRemoved) {
 
   {
     auto fut = Future<>::Make();
-    auto fut2 = fut.Then([](const Result<detail::Empty>&) { return Future<>::Make(); });
+    auto fut2 = fut.Then([]() { return Future<>::Make(); });
     ref = fut.impl_;
     ref2 = fut2.impl_;
   }
@@ -377,7 +372,7 @@ TEST(FutureRefTest, TailRemoved) {
   bool side_effect_run = false;
   {
     ref = std::make_shared<Future<>>(Future<>::Make());
-    auto fut2 = ref->Then([&side_effect_run](const Result<detail::Empty>& status) {
+    auto fut2 = ref->Then([&side_effect_run]() {
       side_effect_run = true;
       return Status::OK();
     });
@@ -401,13 +396,13 @@ TEST(FutureRefTest, HeadRemoved) {
   {
     auto fut = std::make_shared<Future<>>(Future<>::Make());
     ref = fut->impl_;
-    ref2 = std::make_shared<Future<>>(fut->Then([](...) {}));
+    ref2 = std::make_shared<Future<>>(fut->Then([]() {}));
   }
   ASSERT_TRUE(ref.expired());
 
   {
     auto fut = Future<>::Make();
-    ref2 = std::make_shared<Future<>>(fut.Then([&](...) {
+    ref2 = std::make_shared<Future<>>(fut.Then([&]() {
       auto intermediate = Future<>::Make();
       ref = intermediate.impl_;
       return intermediate;
@@ -418,7 +413,12 @@ TEST(FutureRefTest, HeadRemoved) {
 }
 
 TEST(FutureStressTest, Callback) {
-  for (unsigned int n = 0; n < 1000; n++) {
+#ifdef ARROW_VALGRIND
+  const int NITERS = 2;
+#else
+  const int NITERS = 1000;
+#endif
+  for (unsigned int n = 0; n < NITERS; n++) {
     auto fut = Future<>::Make();
     std::atomic<unsigned int> count_finished_immediately(0);
     std::atomic<unsigned int> count_finished_deferred(0);
@@ -429,7 +429,8 @@ TEST(FutureStressTest, Callback) {
       auto test_thread = std::this_thread::get_id();
       while (!finished.load()) {
         fut.AddCallback([&test_thread, &count_finished_immediately,
-                         &count_finished_deferred](const Result<detail::Empty>& result) {
+                         &count_finished_deferred](const Status& status) {
+          ARROW_EXPECT_OK(status);
           if (std::this_thread::get_id() == test_thread) {
             count_finished_immediately++;
           } else {
@@ -437,6 +438,11 @@ TEST(FutureStressTest, Callback) {
           }
         });
         callbacks_added++;
+        if (callbacks_added.load() > 10000) {
+          // If we've added many callbacks already and the main thread hasn't noticed yet,
+          // help it a bit (this seems especially useful in Valgrind).
+          SleepABit();
+        }
       }
     });
 
@@ -473,18 +479,24 @@ TEST(FutureStressTest, TryAddCallback) {
 
     std::thread callback_adder([&] {
       callback_adder_thread_id = std::this_thread::get_id();
-      std::function<void(const Result<detail::Empty>&)> callback =
-          [&callback_adder_thread_id](const Result<detail::Empty>&) {
+      std::function<void(const Status&)> callback =
+          [&callback_adder_thread_id](const Status& st) {
+            ARROW_EXPECT_OK(st);
             if (std::this_thread::get_id() == callback_adder_thread_id) {
               FAIL() << "TryAddCallback allowed a callback to be run synchronously";
             }
           };
-      std::function<std::function<void(const Result<detail::Empty>&)>()>
-          callback_factory = [&callback]() { return callback; };
+      std::function<std::function<void(const Status&)>()> callback_factory =
+          [&callback]() { return callback; };
       while (true) {
         auto callback_added = fut.TryAddCallback(callback_factory);
         if (callback_added) {
           callbacks_added++;
+          if (callbacks_added.load() > 10000) {
+            // If we've added many callbacks already and the main thread hasn't
+            // noticed yet, help it a bit (this seems especially useful in Valgrind).
+            SleepABit();
+          }
         } else {
           break;
         }
@@ -526,7 +538,7 @@ TEST(FutureCompletionTest, Void) {
   {
     // Propagate failure by returning it from on_failure
     auto fut = Future<int>::Make();
-    auto fut2 = fut.Then([](...) {}, [](const Status& s) { return s; });
+    auto fut2 = fut.Then([](const int&) {}, [](const Status& s) { return s; });
     fut.MarkFinished(Status::IOError("xxx"));
     AssertFailed(fut2);
     ASSERT_TRUE(fut2.status().IsIOError());
@@ -534,7 +546,7 @@ TEST(FutureCompletionTest, Void) {
   {
     // From void
     auto fut = Future<>::Make();
-    auto fut2 = fut.Then([](const Result<detail::Empty>&) {});
+    auto fut2 = fut.Then([]() {});
     fut.MarkFinished();
     AssertSuccessful(fut2);
   }
@@ -542,9 +554,9 @@ TEST(FutureCompletionTest, Void) {
     // Propagate failure by not having on_failure
     auto fut = Future<>::Make();
     auto cb_was_run = false;
-    auto fut2 = fut.Then([&cb_was_run](const Result<detail::Empty>& res) {
+    auto fut2 = fut.Then([&cb_was_run]() {
       cb_was_run = true;
-      return res;
+      return Status::OK();
     });
     fut.MarkFinished(Status::IOError("xxx"));
     AssertFailed(fut2);
@@ -554,7 +566,7 @@ TEST(FutureCompletionTest, Void) {
     // Swallow failure by catching in on_failure
     auto fut = Future<>::Make();
     Status status_seen = Status::OK();
-    auto fut2 = fut.Then([](...) {},
+    auto fut2 = fut.Then([]() {},
                          [&status_seen](const Status& s) {
                            status_seen = s;
                            return Status::OK();
@@ -611,7 +623,7 @@ TEST(FutureCompletionTest, NonVoid) {
   {
     // From void
     auto fut = Future<>::Make();
-    auto fut2 = fut.Then([](...) { return 42; });
+    auto fut2 = fut.Then([]() { return 42; });
     fut.MarkFinished();
     AssertSuccessful(fut2);
     auto result = *fut2.result();
@@ -687,7 +699,7 @@ TEST(FutureCompletionTest, FutureNonVoid) {
     // From void
     auto fut = Future<>::Make();
     auto innerFut = Future<std::string>::Make();
-    auto fut2 = fut.Then([&innerFut](...) { return innerFut; });
+    auto fut2 = fut.Then([&innerFut]() { return innerFut; });
     fut.MarkFinished();
     AssertNotFinished(fut2);
     innerFut.MarkFinished("hello");
@@ -701,7 +713,7 @@ TEST(FutureCompletionTest, FutureNonVoid) {
     auto innerFut = Future<std::string>::Make();
     auto was_cb_run = false;
     auto fut2 = fut.Then(
-        [&innerFut, &was_cb_run](...) {
+        [&innerFut, &was_cb_run]() {
           was_cb_run = true;
           return Result<Future<std::string>>(innerFut);
         },
@@ -760,7 +772,7 @@ TEST(FutureCompletionTest, Status) {
   {
     // From void
     auto fut = Future<>::Make();
-    auto fut2 = fut.Then([](const Result<detail::Empty>& res) { return Status::OK(); });
+    auto fut2 = fut.Then([]() { return Status::OK(); });
     fut.MarkFinished();
     AssertSuccessful(fut2);
   }
@@ -769,7 +781,7 @@ TEST(FutureCompletionTest, Status) {
     auto fut = Future<>::Make();
     auto was_cb_run = false;
     auto fut2 = fut.Then(
-        [&was_cb_run](const Result<detail::Empty>& res) {
+        [&was_cb_run]() {
           was_cb_run = true;
           return Status::OK();
         },
@@ -831,7 +843,7 @@ TEST(FutureCompletionTest, Result) {
   {
     // From void
     auto fut = Future<>::Make();
-    auto fut2 = fut.Then([](...) { return Result<int>(42); });
+    auto fut2 = fut.Then([]() { return Result<int>(42); });
     fut.MarkFinished();
     AssertSuccessful(fut2);
     auto result = *fut2.result();
@@ -842,7 +854,7 @@ TEST(FutureCompletionTest, Result) {
     auto fut = Future<>::Make();
     auto was_cb_run = false;
     auto fut2 = fut.Then(
-        [&was_cb_run](...) {
+        [&was_cb_run]() {
           was_cb_run = true;
           return Result<int>(42);
         },
@@ -923,7 +935,7 @@ TEST(FutureCompletionTest, FutureVoid) {
     // From void
     auto fut = Future<>::Make();
     auto innerFut = Future<>::Make();
-    auto fut2 = fut.Then([&innerFut](...) { return innerFut; });
+    auto fut2 = fut.Then([&innerFut]() { return innerFut; });
     fut.MarkFinished();
     AssertNotFinished(fut2);
     innerFut.MarkFinished();
@@ -933,7 +945,7 @@ TEST(FutureCompletionTest, FutureVoid) {
     // Propagate failure by returning failure
     auto fut = Future<>::Make();
     auto innerFut = Future<>::Make();
-    auto fut2 = fut.Then([&innerFut](...) { return innerFut; },
+    auto fut2 = fut.Then([&innerFut]() { return innerFut; },
                          [](const Status& s) { return Future<>::MakeFinished(s); });
     fut.MarkFinished(Status::IOError("xxx"));
     AssertFailed(fut2);
@@ -1065,7 +1077,7 @@ TEST(FutureLoopTest, Sync) {
 
 TEST(FutureLoopTest, EmptyBreakValue) {
   Future<> none_fut =
-      Loop([&] { return Future<>::MakeFinished().Then([&](...) { return Break(); }); });
+      Loop([&] { return Future<>::MakeFinished().Then([&]() { return Break(); }); });
   AssertSuccessful(none_fut);
 }
 
@@ -1130,7 +1142,7 @@ TEST(FutureLoopTest, AllowsBreakFutToBeDiscarded) {
     }
     return Future<ControlFlow<int>>::MakeFinished(Break(-1));
   };
-  auto loop_fut = Loop(loop_body).Then([](...) { return Status::OK(); });
+  auto loop_fut = Loop(loop_body).Then([](const int&) { return Status::OK(); });
   ASSERT_TRUE(loop_fut.Wait(0.1));
 }
 
@@ -1160,7 +1172,7 @@ class MoveTrackingCallable {
     return *this;
   }
 
-  Status operator()(...) {
+  Status operator()() {
     // std::cout << "TRIGGER" << std::endl;
     if (valid_) {
       return Status::OK();
@@ -1182,7 +1194,7 @@ TEST(FutureCompletionTest, ReuseCallback) {
     continuation = fut.Then(callback);
   }
 
-  fut.MarkFinished(Status::OK());
+  fut.MarkFinished();
 
   ASSERT_TRUE(continuation.is_finished());
   if (continuation.is_finished()) {
@@ -1299,7 +1311,11 @@ class FutureTestBase : public ::testing::Test {
   }
 
   void TestStressWait() {
+#ifdef ARROW_VALGRIND
+    const int N = 20;
+#else
     const int N = 2000;
+#endif
     MakeExecutor(N);
     const auto& futures = executor_->futures();
     const auto spans = RandomSequenceSpans(N);
@@ -1391,7 +1407,11 @@ class FutureTestBase : public ::testing::Test {
   }
 
   void TestStressWaitForAny() {
+#ifdef ARROW_VALGRIND
+    const int N = 5;
+#else
     const int N = 300;
+#endif
     MakeExecutor(N);
     const auto& futures = executor_->futures();
     const auto spans = RandomSequenceSpans(N);
@@ -1416,7 +1436,11 @@ class FutureTestBase : public ::testing::Test {
   }
 
   void TestStressWaitForAll() {
+#ifdef ARROW_VALGRIND
+    const int N = 5;
+#else
     const int N = 300;
+#endif
     MakeExecutor(N);
     const auto& futures = executor_->futures();
     const auto spans = RandomSequenceSpans(N);
@@ -1471,7 +1495,11 @@ class FutureTestBase : public ::testing::Test {
   }
 
   void TestStressAsCompleted() {
+#ifdef ARROW_VALGRIND
+    const int N = 10;
+#else
     const int N = 1000;
+#endif
     MakeExecutor(N);
 
     // Launch a worker thread that will finish random spans of futures,
@@ -1565,7 +1593,5 @@ TEST(FnOnceTest, MoveOnlyDataType) {
   ASSERT_EQ(i0.moves, 0);
   ASSERT_EQ(i1.moves, 0);
 }
-
 }  // namespace internal
-
 }  // namespace arrow

@@ -202,6 +202,17 @@ std::shared_ptr<arrow::compute::FunctionOptions> make_compute_options(
                                      cpp11::as_cpp<bool>(options["skip_nulls"]));
   }
 
+  if (func_name == "dictionary_encode") {
+    using Options = arrow::compute::DictionaryEncodeOptions;
+    auto out = std::make_shared<Options>(Options::Defaults());
+    if (!Rf_isNull(options["null_encoding_behavior"])) {
+      out->null_encoding_behavior = cpp11::as_cpp<
+          enum arrow::compute::DictionaryEncodeOptions::NullEncodingBehavior>(
+          options["null_encoding_behavior"]);
+    }
+    return out;
+  }
+
   if (func_name == "cast") {
     return make_cast_options(options);
   }
@@ -220,6 +231,38 @@ std::shared_ptr<arrow::compute::FunctionOptions> make_compute_options(
     return std::make_shared<Options>(cpp11::as_cpp<std::string>(options["pattern"]),
                                      cpp11::as_cpp<std::string>(options["replacement"]),
                                      max_replacements);
+  }
+
+  if (func_name == "split_pattern") {
+    using Options = arrow::compute::SplitPatternOptions;
+    int64_t max_splits = -1;
+    if (!Rf_isNull(options["max_splits"])) {
+      max_splits = cpp11::as_cpp<int64_t>(options["max_splits"]);
+    }
+    bool reverse = false;
+    if (!Rf_isNull(options["reverse"])) {
+      reverse = cpp11::as_cpp<bool>(options["reverse"]);
+    }
+    return std::make_shared<Options>(cpp11::as_cpp<std::string>(options["pattern"]),
+                                     max_splits, reverse);
+  }
+
+  if (func_name == "utf8_split_whitespace" || func_name == "ascii_split_whitespace") {
+    using Options = arrow::compute::SplitOptions;
+    int64_t max_splits = -1;
+    if (!Rf_isNull(options["max_splits"])) {
+      max_splits = cpp11::as_cpp<int64_t>(options["max_splits"]);
+    }
+    bool reverse = false;
+    if (!Rf_isNull(options["reverse"])) {
+      reverse = cpp11::as_cpp<bool>(options["reverse"]);
+    }
+    return std::make_shared<Options>(max_splits, reverse);
+  }
+
+  if (func_name == "variance" || func_name == "stddev") {
+    using Options = arrow::compute::VarianceOptions;
+    return std::make_shared<Options>(cpp11::as_cpp<int64_t>(options["ddof"]));
   }
 
   return nullptr;

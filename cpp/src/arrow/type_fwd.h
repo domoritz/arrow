@@ -29,16 +29,18 @@ namespace arrow {
 
 template <typename T>
 class Iterator;
+template <typename T>
+struct IterationTraits;
 
 template <typename T>
 class Result;
 
 class Status;
 
-namespace detail {
+namespace internal {
 struct Empty;
-}
-template <typename T = detail::Empty>
+}  // namespace internal
+template <typename T = internal::Empty>
 class Future;
 
 namespace util {
@@ -79,6 +81,7 @@ class RecordBatchReader;
 class Table;
 
 struct Datum;
+struct ValueDescr;
 
 using ChunkedArrayVector = std::vector<std::shared_ptr<ChunkedArray>>;
 using RecordBatchVector = std::vector<std::shared_ptr<RecordBatch>>;

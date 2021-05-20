@@ -15,6 +15,8 @@
 # specific language governing permissions and limitations
 # under the License.
 
+skip_if_not_available("dataset")
+
 library(dplyr)
 library(stringr)
 
@@ -32,7 +34,7 @@ test_that("basic select/filter/collect", {
     select(int, chr) %>%
     filter(int > 5)
 
-  expect_is(b2, "arrow_dplyr_query")
+  expect_s3_class(b2, "arrow_dplyr_query")
   t2 <- collect(b2)
   expect_equal(t2, tbl[tbl$int > 5 & !is.na(tbl$int), c("int", "chr")])
   # Test that the original object is not affected
@@ -57,11 +59,11 @@ test_that("Print method", {
       filter(int < 5) %>%
       select(int, chr) %>%
       print(),
-'RecordBatch (query)
+'InMemoryDataset (query)
 int: int32
 chr: string
 
-* Filter: and(and(greater(dbl, 2), or(equal(chr, "d"), equal(chr, "f"))), less(int, 5))
+* Filter: (((dbl > 2) and ((chr == "d") or (chr == "f"))) and (int < 5))
 See $.data for the source Arrow object',
   fixed = TRUE
   )
@@ -187,7 +189,8 @@ test_that("collect(as_data_frame=FALSE)", {
     filter(int > 5) %>%
     collect(as_data_frame = FALSE)
 
-  expect_is(b2, "RecordBatch")
+  # collect(as_data_frame = FALSE) always returns Table now
+  expect_r6_class(b2, "Table")
   expected <- tbl[tbl$int > 5 & !is.na(tbl$int), c("int", "chr")]
   expect_equal(as.data.frame(b2), expected)
 
@@ -195,7 +198,7 @@ test_that("collect(as_data_frame=FALSE)", {
     select(int, strng = chr) %>%
     filter(int > 5) %>%
     collect(as_data_frame = FALSE)
-  expect_is(b3, "RecordBatch")
+  expect_r6_class(b3, "Table")
   expect_equal(as.data.frame(b3), set_names(expected, c("int", "strng")))
 
   b4 <- batch %>%
@@ -203,7 +206,7 @@ test_that("collect(as_data_frame=FALSE)", {
     filter(int > 5) %>%
     group_by(int) %>%
     collect(as_data_frame = FALSE)
-  expect_is(b4, "arrow_dplyr_query")
+  expect_s3_class(b4, "arrow_dplyr_query")
   expect_equal(
     as.data.frame(b4),
     expected %>%
@@ -217,14 +220,14 @@ test_that("compute()", {
 
   b1 <- batch %>% compute()
 
-  expect_is(b1, "RecordBatch")
+  expect_r6_class(b1, "RecordBatch")
 
   b2 <- batch %>%
     select(int, chr) %>%
     filter(int > 5) %>%
     compute()
 
-  expect_is(b2, "RecordBatch")
+  expect_r6_class(b2, "Table")
   expected <- tbl[tbl$int > 5 & !is.na(tbl$int), c("int", "chr")]
   expect_equal(as.data.frame(b2), expected)
 
@@ -232,7 +235,7 @@ test_that("compute()", {
     select(int, strng = chr) %>%
     filter(int > 5) %>%
     compute()
-  expect_is(b3, "RecordBatch")
+  expect_r6_class(b3, "Table")
   expect_equal(as.data.frame(b3), set_names(expected, c("int", "strng")))
 
   b4 <- batch %>%
@@ -240,7 +243,7 @@ test_that("compute()", {
     filter(int > 5) %>%
     group_by(int) %>%
     compute()
-  expect_is(b4, "arrow_dplyr_query")
+  expect_s3_class(b4, "arrow_dplyr_query")
   expect_equal(
     as.data.frame(b4),
     expected %>%
@@ -257,7 +260,7 @@ test_that("head", {
     filter(int > 5) %>%
     head(2)
 
-  expect_is(b2, "RecordBatch")
+  expect_r6_class(b2, "Table")
   expected <- tbl[tbl$int > 5 & !is.na(tbl$int), c("int", "chr")][1:2, ]
   expect_equal(as.data.frame(b2), expected)
 
@@ -265,7 +268,7 @@ test_that("head", {
     select(int, strng = chr) %>%
     filter(int > 5) %>%
     head(2)
-  expect_is(b3, "RecordBatch")
+  expect_r6_class(b3, "Table")
   expect_equal(as.data.frame(b3), set_names(expected, c("int", "strng")))
 
   b4 <- batch %>%
@@ -273,7 +276,7 @@ test_that("head", {
     filter(int > 5) %>%
     group_by(int) %>%
     head(2)
-  expect_is(b4, "arrow_dplyr_query")
+  expect_s3_class(b4, "arrow_dplyr_query")
   expect_equal(
     as.data.frame(b4),
     expected %>%
@@ -290,7 +293,7 @@ test_that("tail", {
     filter(int > 5) %>%
     tail(2)
 
-  expect_is(b2, "RecordBatch")
+  expect_r6_class(b2, "Table")
   expected <- tail(tbl[tbl$int > 5 & !is.na(tbl$int), c("int", "chr")], 2)
   expect_equal(as.data.frame(b2), expected)
 
@@ -298,7 +301,7 @@ test_that("tail", {
     select(int, strng = chr) %>%
     filter(int > 5) %>%
     tail(2)
-  expect_is(b3, "RecordBatch")
+  expect_r6_class(b3, "Table")
   expect_equal(as.data.frame(b3), set_names(expected, c("int", "strng")))
 
   b4 <- batch %>%
@@ -306,7 +309,7 @@ test_that("tail", {
     filter(int > 5) %>%
     group_by(int) %>%
     tail(2)
-  expect_is(b4, "arrow_dplyr_query")
+  expect_s3_class(b4, "arrow_dplyr_query")
   expect_equal(
     as.data.frame(b4),
     expected %>%
@@ -358,7 +361,70 @@ test_that("relocate with selection helpers", {
   )
 })
 
-test_that("explicit type conversions", {
+test_that("explicit type conversions with cast()", {
+  num_int32 <- 12L
+  num_int64 <- bit64::as.integer64(10)
+
+  int_types <- c(int8(), int16(), int32(), int64())
+  uint_types <- c(uint8(), uint16(), uint32(), uint64())
+  float_types <- c(float32(), float64())
+
+  types <- c(
+    int_types,
+    uint_types,
+    float_types,
+    double(), # not actually a type, a base R function but should be alias for float64
+    string()
+  )
+
+  for (type in types) {
+    expect_type_equal(
+      {
+        t1 <- Table$create(x = num_int32) %>%
+          transmute(x = cast(x, type)) %>%
+          compute()
+        t1$schema[[1]]$type
+      },
+      as_type(type)
+    )
+    expect_type_equal(
+      {
+        t1 <- Table$create(x = num_int64) %>%
+          transmute(x = cast(x, type)) %>%
+          compute()
+        t1$schema[[1]]$type
+      },
+      as_type(type)
+    )
+  }
+
+  # Arrow errors when truncating floats...
+  expect_error(
+    expect_type_equal(
+      {
+        t1 <- Table$create(pi = pi) %>%
+          transmute(three = cast(pi, int32())) %>%
+          compute()
+        t1$schema[[1]]$type
+      },
+      int32()
+    ),
+    "truncated"
+  )
+
+  # ... unless safe = FALSE (or allow_float_truncate = TRUE)
+  expect_type_equal(
+    {
+      t1 <- Table$create(pi = pi) %>%
+        transmute(three = cast(pi, int32(), safe = FALSE)) %>%
+        compute()
+      t1$schema[[1]]$type
+    },
+    int32()
+  )
+})
+
+test_that("explicit type conversions with as.*()", {
   library(bit64)
   expect_dplyr_equal(
     input %>%
@@ -421,12 +487,14 @@ test_that("explicit type conversions", {
         int2dbl = as.double(int),
         int2int = as.integer(int),
         int2lgl = as.logical(int),
-        lgl2chr = toupper(as.character(lgl)), # Arrow returns "true", "false"
+        lgl2chr = as.character(lgl), # Arrow returns "true", "false" here ...
         lgl2dbl = as.double(lgl),
         lgl2int = as.integer(lgl),
-        lgl2lgl = as.logical(lgl),
+        lgl2lgl = as.logical(lgl)
       ) %>%
-      collect(),
+      collect() %>%
+      # need to use toupper() *after* collect() or else skip if utf8proc not available
+      mutate(lgl2chr = toupper(lgl2chr)), # ... but we need "TRUE", "FALSE"
     tibble(
       dbl = c(1, 0, NA_real_),
       int = c(1L, 0L, NA_integer_),
@@ -435,9 +503,61 @@ test_that("explicit type conversions", {
   )
 })
 
-test_that("bad explicit type conversions", {
+test_that("as.factor()/dictionary_encode()", {
+  skip("ARROW-12632: ExecuteScalarExpression cannot Execute non-scalar expression {x=dictionary_encode(x, {NON-REPRESENTABLE OPTIONS})}")
+  df1 <- tibble(x = c("C", "D", "B", NA, "D", "B", "S", "A", "B", "Z", "B"))
+  df2 <- tibble(x = c(5, 5, 5, NA, 2, 3, 6, 8))
 
-  # Arrow returns lowercase "true", "false"
+  expect_dplyr_equal(
+    input %>%
+      transmute(x = as.factor(x)) %>%
+      collect(),
+    df1
+  )
+
+  expect_warning(
+    expect_dplyr_equal(
+      input %>%
+        transmute(x = as.factor(x)) %>%
+        collect(),
+      df2
+    ),
+    "Coercing dictionary values to R character factor levels"
+  )
+
+  # dictionary values with default null encoding behavior ("mask") omits
+  # nulls from the dictionary values
+  expect_equal(
+    {
+      rb1 <- df1 %>%
+        record_batch() %>%
+        transmute(x = dictionary_encode(x)) %>%
+        compute()
+      dict <- rb1$x$dictionary()
+      as.vector(dict$Take(dict$SortIndices()))
+    },
+    sort(unique(df1$x), na.last = NA)
+  )
+
+  # dictionary values with "encode" null encoding behavior includes nulls in
+  # the dictionary values
+  expect_equal(
+    {
+      rb1 <- df1 %>%
+        record_batch() %>%
+        transmute(x = dictionary_encode(x, null_encoding_behavior = "encode")) %>%
+        compute()
+      dict <- rb1$x$dictionary()
+      as.vector(dict$Take(dict$SortIndices()))
+    },
+    sort(unique(df1$x), na.last = TRUE)
+  )
+
+})
+
+test_that("bad explicit type conversions with as.*()", {
+
+  # Arrow returns lowercase "true", "false" (instead of "TRUE", "FALSE" like R)
   expect_error(
     expect_dplyr_equal(
       input %>%
@@ -448,7 +568,21 @@ test_that("bad explicit type conversions", {
     )
   )
 
-  # Arrow fails to parse these strings as Booleans
+  # Arrow fails to parse these strings as numbers (instead of returning NAs with
+  # a warning like R does)
+  expect_error(
+    expect_warning(
+      expect_dplyr_equal(
+        input %>%
+          transmute(chr2num = as.numeric(chr)) %>%
+          collect(),
+        tibble(chr = c("l.O", "S.S", ""))
+      )
+    )
+  )
+
+  # Arrow fails to parse these strings as Booleans (instead of returning NAs
+  # like R does)
   expect_error(
     expect_dplyr_equal(
       input %>%

@@ -228,6 +228,9 @@ if(ARROW_HAVE_RUNTIME_AVX512)
   set_source_files_properties(util/bpacking_avx512.cc PROPERTIES COMPILE_FLAGS
                               ${ARROW_AVX512_FLAG})
 endif()
+if(ARROW_HAVE_NEON)
+  list(APPEND ARROW_SRCS util/bpacking_neon.cc)
+endif()
 
 if(APPLE)
   list(APPEND ARROW_SRCS vendored/datetime/ios.mm)
@@ -364,6 +367,8 @@ if(ARROW_COMPUTE)
               compute/api_vector.cc
               compute/cast.cc
               compute/exec.cc
+              compute/exec/exec_plan.cc
+              compute/exec/expression.cc
               compute/function.cc
               compute/kernel.cc
               compute/registry.cc
@@ -401,6 +406,7 @@ if(ARROW_COMPUTE)
     set_source_files_properties(compute/kernels/aggregate_basic_avx2.cc PROPERTIES
                                 COMPILE_FLAGS ${ARROW_AVX2_FLAG})
   endif()
+
   if(ARROW_HAVE_RUNTIME_AVX512)
     list(APPEND ARROW_SRCS compute/kernels/aggregate_basic_avx512.cc)
     set_source_files_properties(compute/kernels/aggregate_basic_avx512.cc PROPERTIES
@@ -408,6 +414,8 @@ if(ARROW_COMPUTE)
     set_source_files_properties(compute/kernels/aggregate_basic_avx512.cc PROPERTIES
                                 COMPILE_FLAGS ${ARROW_AVX512_FLAG})
   endif()
+
+  list(APPEND ARROW_TESTING_SRCS compute/exec/test_util.cc)
 endif()
 
 if(ARROW_FILESYSTEM)
@@ -512,11 +520,14 @@ if(ARROW_BUILD_STATIC AND WIN32)
   target_compile_definitions(arrow_static PUBLIC ARROW_STATIC)
 endif()
 
+foreach(LIB_TARGET ${ARROW_LIBRARIES})
+  target_compile_definitions(${LIB_TARGET} PRIVATE ARROW_EXPORTING)
+endforeach()
+
 if(ARROW_WITH_BACKTRACE)
   find_package(Backtrace)
 
   foreach(LIB_TARGET ${ARROW_LIBRARIES})
-    target_compile_definitions(${LIB_TARGET} PRIVATE ARROW_EXPORTING)
     if(Backtrace_FOUND AND ARROW_WITH_BACKTRACE)
       target_compile_definitions(${LIB_TARGET} PRIVATE ARROW_WITH_BACKTRACE)
     endif()

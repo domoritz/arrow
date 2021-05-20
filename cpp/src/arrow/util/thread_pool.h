@@ -23,6 +23,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <queue>
 #include <type_traits>
 #include <utility>
 
@@ -101,13 +102,12 @@ class ARROW_EXPORT Executor {
   // The continuations of that future should run on the CPU thread pool keeping
   // CPU heavy work off the I/O thread pool.  So the I/O task should transfer
   // the future to the CPU executor before returning.
-  template <typename T>
+  template <typename T, typename FT = Future<T>, typename FTSync = typename FT::SyncType>
   Future<T> Transfer(Future<T> future) {
     auto transferred = Future<T>::Make();
-    auto callback = [this, transferred](const Result<T>& result) mutable {
-      auto spawn_status = Spawn([transferred, result]() mutable {
-        transferred.MarkFinished(std::move(result));
-      });
+    auto callback = [this, transferred](const FTSync& result) mutable {
+      auto spawn_status =
+          Spawn([transferred, result]() mutable { transferred.MarkFinished(result); });
       if (!spawn_status.ok()) {
         transferred.MarkFinished(spawn_status);
       }
@@ -189,8 +189,65 @@ class ARROW_EXPORT Executor {
                            StopCallback&&) = 0;
 };
 
-// An Executor implementation spawning tasks in FIFO manner on a fixed-size
-// pool of worker threads.
+/// \brief An executor implementation that runs all tasks on a single thread using an
+/// event loop.
+///
+/// Note: Any sort of nested parallelism will deadlock this executor.  Blocking waits are
+/// fine but if one task needs to wait for another task it must be expressed as an
+/// asynchronous continuation.
+class ARROW_EXPORT SerialExecutor : public Executor {
+ public:
+  template <typename T = ::arrow::internal::Empty>
+  using TopLevelTask = internal::FnOnce<Future<T>(Executor*)>;
+
+  ~SerialExecutor();
+
+  int GetCapacity() override { return 1; };
+  Status SpawnReal(TaskHints hints, FnOnce<void()> task, StopToken,
+                   StopCallback&&) override;
+
+  /// \brief Runs the TopLevelTask and any scheduled tasks
+  ///
+  /// The TopLevelTask (or one of the tasks it schedules) must either return an invalid
+  /// status or call the finish signal. Failure to do this will result in a deadlock.  For
+  /// this reason it is preferable (if possible) to use the helper methods (below)
+  /// RunSynchronously/RunSerially which delegates the responsiblity onto a Future
+  /// producer's existing responsibility to always mark a future finished (which can
+  /// someday be aided by ARROW-12207).
+  template <typename T = internal::Empty, typename FT = Future<T>,
+            typename FTSync = typename FT::SyncType>
+  static FTSync RunInSerialExecutor(TopLevelTask<T> initial_task) {
+    Future<T> fut = SerialExecutor().Run<T>(std::move(initial_task));
+    return FutureToSync(fut);
+  }
+
+ private:
+  SerialExecutor();
+
+  // State uses mutex
+  struct State;
+  std::shared_ptr<State> state_;
+
+  template <typename T, typename FTSync = typename Future<T>::SyncType>
+  Future<T> Run(TopLevelTask<T> initial_task) {
+    auto final_fut = std::move(initial_task)(this);
+    if (final_fut.is_finished()) {
+      return final_fut;
+    }
+    final_fut.AddCallback([this](const FTSync&) { MarkFinished(); });
+    RunLoop();
+    return final_fut;
+  }
+  void RunLoop();
+  void MarkFinished();
+};
+
+/// An Executor implementation spawning tasks in FIFO manner on a fixed-size
+/// pool of worker threads.
+///
+/// Note: Any sort of nested parallelism will deadlock this executor.  Blocking waits are
+/// fine but if one task needs to wait for another task it must be expressed as an
+/// asynchronous continuation.
 class ARROW_EXPORT ThreadPool : public Executor {
  public:
   // Construct a thread pool with the given number of worker threads
@@ -207,6 +264,9 @@ class ARROW_EXPORT ThreadPool : public Executor {
   // The actual number of workers may lag a bit before being adjusted to
   // match this value.
   int GetCapacity() override;
+
+  // Return the number of tasks either running or in the queue.
+  int GetNumTasks();
 
   // Dynamically change the number of worker threads.
   //
@@ -261,6 +321,25 @@ class ARROW_EXPORT ThreadPool : public Executor {
 
 // Return the process-global thread pool for CPU-bound tasks.
 ARROW_EXPORT ThreadPool* GetCpuThreadPool();
+
+/// \brief Potentially run an async operation serially (if use_threads is false)
+/// \see RunSerially
+///
+/// If `use_threads` is true, the global CPU executor is used.
+/// If `use_threads` is false, a temporary SerialExecutor is used.
+/// `get_future` is called (from this thread) with the chosen executor and must
+/// return a future that will eventually finish. This function returns once the
+/// future has finished.
+template <typename Fut, typename ValueType = typename Fut::ValueType>
+typename Fut::SyncType RunSynchronously(FnOnce<Fut(Executor*)> get_future,
+                                        bool use_threads) {
+  if (use_threads) {
+    auto fut = std::move(get_future)(GetCpuThreadPool());
+    return FutureToSync(fut);
+  } else {
+    return SerialExecutor::RunInSerialExecutor<ValueType>(std::move(get_future));
+  }
+}
 
 }  // namespace internal
 }  // namespace arrow

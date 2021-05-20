@@ -286,6 +286,7 @@ cdef extern from "arrow/api.h" namespace "arrow" nogil:
         int64_t bytes_allocated()
         int64_t max_memory()
         c_string backend_name()
+        void ReleaseUnused()
 
     cdef cppclass CLoggingMemoryPool" arrow::LoggingMemoryPool"(CMemoryPool):
         CLoggingMemoryPool(CMemoryPool*)
@@ -1558,30 +1559,6 @@ cdef extern from "arrow/ipc/api.h" namespace "arrow::ipc" nogil:
             const CIpcWriteOptions& options,
             CIpcPayload* out)
 
-    int kFeatherV1Version" arrow::ipc::feather::kFeatherV1Version"
-    int kFeatherV2Version" arrow::ipc::feather::kFeatherV2Version"
-
-    cdef cppclass CFeatherProperties" arrow::ipc::feather::WriteProperties":
-        int version
-        int chunksize
-        CCompressionType compression
-        int compression_level
-
-    CStatus WriteFeather" arrow::ipc::feather::WriteTable"\
-        (const CTable& table, COutputStream* out,
-         CFeatherProperties properties)
-
-    cdef cppclass CFeatherReader" arrow::ipc::feather::Reader":
-        @staticmethod
-        CResult[shared_ptr[CFeatherReader]] Open(
-            const shared_ptr[CRandomAccessFile]& file)
-        int version()
-        shared_ptr[CSchema] schema()
-
-        CStatus Read(shared_ptr[CTable]* out)
-        CStatus Read(const vector[int] indices, shared_ptr[CTable]* out)
-        CStatus Read(const vector[c_string] names, shared_ptr[CTable]* out)
-
 
 cdef extern from 'arrow/util/value_parsing.h' namespace 'arrow' nogil:
     cdef cppclass CTimestampParser" arrow::TimestampParser":
@@ -1607,6 +1584,9 @@ cdef extern from "arrow/csv/api.h" namespace "arrow::csv" nogil:
         c_bool newlines_in_values
         c_bool ignore_empty_lines
 
+        CCSVParseOptions()
+        CCSVParseOptions(CCSVParseOptions&&)
+
         @staticmethod
         CCSVParseOptions Defaults()
 
@@ -1625,6 +1605,9 @@ cdef extern from "arrow/csv/api.h" namespace "arrow::csv" nogil:
         vector[c_string] include_columns
         c_bool include_missing_columns
 
+        CCSVConvertOptions()
+        CCSVConvertOptions(CCSVConvertOptions&&)
+
         @staticmethod
         CCSVConvertOptions Defaults()
 
@@ -1634,6 +1617,9 @@ cdef extern from "arrow/csv/api.h" namespace "arrow::csv" nogil:
         int32_t skip_rows
         vector[c_string] column_names
         c_bool autogenerate_column_names
+
+        CCSVReadOptions()
+        CCSVReadOptions(CCSVReadOptions&&)
 
         @staticmethod
         CCSVReadOptions Defaults()
@@ -1822,6 +1808,11 @@ cdef extern from "arrow/compute/api.h" namespace "arrow::compute" nogil:
         c_string pattern
         c_string replacement
         int64_t max_replacements
+
+    cdef cppclass CExtractRegexOptions \
+            "arrow::compute::ExtractRegexOptions"(CFunctionOptions):
+        CExtractRegexOptions(c_string pattern)
+        c_string pattern
 
     cdef cppclass CCastOptions" arrow::compute::CastOptions"(CFunctionOptions):
         CCastOptions()
@@ -2143,6 +2134,7 @@ cdef extern from "arrow/python/api.h" namespace "arrow::py" nogil:
         c_bool safe_cast
         c_bool split_blocks
         c_bool self_destruct
+        c_bool decode_dictionaries
         unordered_set[c_string] categorical_columns
         unordered_set[c_string] extension_columns
 

@@ -134,6 +134,7 @@ of Arrow and run the command:
    vcpkg install ^
      --triplet x64-windows ^
      --x-manifest-root cpp  ^
+     --feature-flags=versions ^
      --clean-after-build
 
 On Windows, vcpkg builds dynamic link libraries by default. Use the triplet
@@ -194,7 +195,7 @@ to the Unix-specific ``ccache``).
 Newer versions of Visual Studio include Ninja. To see if your Visual Studio
 includes Ninja, run the initialization command shown
 :ref:`above<windows-system-setup>` (``vcvarsall.bat`` or ``VsDevCmd.bat``), then
- run ``ninja --version``.
+run ``ninja --version``.
 
 If Ninja is not included in your version of Visual Studio, and you are using
 conda, activate your conda environment and install Ninja and clcache:

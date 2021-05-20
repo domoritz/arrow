@@ -63,9 +63,16 @@ Examples:
 
 This argument configuration also applies to `clean` and `test` scripts.
 
+To run tests on the bundles, you need to build them first.
+To run tests directly on the sources without bundling, use the `src` target (e.g. `yarn test -t src`).
+
 * `yarn deploy`
 
 Uses [lerna](https://github.com/lerna/lerna) to publish each build target to npm with [conventional](https://conventionalcommits.org/) [changelogs](https://github.com/conventional-changelog/conventional-changelog/tree/master/packages/conventional-changelog-cli).
+
+# Running the Performance Benchmarks
+
+First, compile the bundles with `yarn build` and generate perf data with `yarn create:perfdata`. Then you can run the benchmarks with `yarn perf`. You can change the target you want to test by changing the imports in `perf/index.js`. To print the results to stderr as JSON, add the `--json` flag (e.g. `yarn perf --json 2> perf.json`).
 
 # Updating the Arrow format flatbuffers generated code
 
@@ -99,8 +106,6 @@ Uses [lerna](https://github.com/lerna/lerna) to publish each build target to npm
     sed -i '+s+./flatbuffers+flatbuffers+ig' *_generated.ts
     # Fix the Union createTypeIdsVector typings
     sed -i -r '+s+static createTypeIdsVector\(builder: flatbuffers.Builder, data: number\[\] \| Uint8Array+static createTypeIdsVector\(builder: flatbuffers.Builder, data: number\[\] \| Int32Array+ig' Schema_generated.ts
-    # Add `/* tslint:disable:class-name */` to the top of `Schema.ts`
-    echo -e '/* tslint:disable:class-name */\n' | cat - Schema_generated.ts > Schema1.ts && mv Schema1.ts Schema_generated.ts
     # Remove "_generated" suffix from TS files
     mv File{_generated,}.ts && mv Schema{_generated,}.ts && mv Message{_generated,}.ts
     ```
