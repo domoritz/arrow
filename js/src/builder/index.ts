@@ -35,32 +35,4 @@ export { FixedSizeListBuilder } from './fixedsizelist.js';
 export { MapBuilder } from './map.js';
 export { StructBuilder } from './struct.js';
 export { UnionBuilder, SparseUnionBuilder, DenseUnionBuilder } from './union.js';
-
-import { Field } from '../schema.js';
-import { DataType } from '../type.js';
-import { BuilderType as B } from '../interfaces.js';
-import { Builder, BuilderOptions } from '../builder.js';
-import { instance as getBuilderConstructor } from '../visitor/builderctor.js';
-
-export function newBuilder<T extends DataType = any, TNull = any>(options: BuilderOptions<T, TNull>): B<T, TNull> {
-
-    const type = options.type;
-    const builder = new (getBuilderConstructor.getVisitFn<T>(type)())(options) as Builder<T, TNull>;
-
-    if (type.children && type.children.length > 0) {
-
-        const children = options['children'] || [] as BuilderOptions[];
-        const defaultOptions = { 'nullValues': options['nullValues'] };
-        const getChildOptions = Array.isArray(children)
-            ? ((_: Field, i: number) => children[i] || defaultOptions)
-            : (({ name }: Field) => children[name] || defaultOptions);
-
-        for (const [index, field] of type.children.entries()) {
-            const { type } = field;
-            const opts = getChildOptions(field, index);
-            builder.children.push(newBuilder({ ...opts, type }));
-        }
-    }
-
-    return builder as B<T, TNull>;
-}
+export { makeBuilder } from './makeBuilder.js';

@@ -61,7 +61,7 @@ export { MapRow } from './row/map.js';
 export { StructRow } from './row/struct.js';
 
 export {
-    Builder,
+    Builder, makeBuilder,
     BinaryBuilder,
     BoolBuilder,
     DateBuilder, DateDayBuilder, DateMillisecondBuilder,

@@ -15,9 +15,11 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { Bool } from '../type.js';
+
 import { BitmapBufferBuilder } from './buffer.js';
 import { Builder, BuilderOptions } from '../builder.js';
+import { Bool } from '../type.js';
+
 
 /** @ignore */
 export class BoolBuilder<TNull = any> extends Builder<Bool, TNull> {

@@ -19,7 +19,7 @@ import { Type } from './enum.js';
 import { clampRange } from './util/vector.js';
 import { DataType, strideForType } from './type.js';
 import { Data, makeData, DataProps } from './data.js';
-import { Builder, IterableBuilderOptions } from './builder.js';
+import { IterableBuilderOptions, throughIterable } from './builder.js';
 import { ArrayDataType, BigIntArray, JavaScriptArrayDataType, TypedArray, TypedArrayDataType } from './interfaces.js';
 
 import {
@@ -532,7 +532,7 @@ export function vectorFromArray(init: any, type?: DataType) {
         return makeVector(init as any);
     }
     const options: IterableBuilderOptions = { type: type ?? inferType(init) };
-    const chunks = [...Builder.throughIterable(options)(init)];
+    const chunks = [...throughIterable(options)(init)];
     const vector = chunks.length === 1 ? chunks[0] : chunks.reduce((a, b) => a.concat(b));
     if (DataType.isDictionary(vector.type)) {
         return vector.memoize();

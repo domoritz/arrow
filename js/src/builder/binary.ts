@@ -17,13 +17,49 @@
 
 import { Binary } from '../type.js';
 import { toUint8Array } from '../util/buffer.js';
-import { BufferBuilder } from './buffer.js';
+import { BufferBuilder, OffsetsBufferBuilder } from './buffer.js';
 import { VariableWidthBuilder, BuilderOptions } from '../builder.js';
+import { Builder } from './index.js';
 
 /** @ignore */
-export class BinaryBuilder<TNull = any> extends VariableWidthBuilder<Binary, TNull> {
+export class BinaryBuilder<TNull = any> extends Builder<Binary, TNull> {
+    protected _pendingLength = 0;
+    protected _offsets: OffsetsBufferBuilder;
+    protected _pending: Map<number, any> | undefined;
+    public setValid(index: number, isValid: boolean) {
+        if (!super.setValid(index, isValid)) {
+            (this._pending || (this._pending = new Map())).set(index, undefined);
+            return false;
+        }
+        return true;
+    }
+    public clear() {
+        this._pendingLength = 0;
+        this._pending = undefined;
+        return super.clear();
+    }
+    public flush() {
+        this._flush();
+        return super.flush();
+    }
+    public finish() {
+        this._flush();
+        return super.finish();
+    }
+    protected _flush() {
+        const pending = this._pending;
+        const pendingLength = this._pendingLength;
+        this._pendingLength = 0;
+        this._pending = undefined;
+        if (pending && pending.size > 0) {
+            this._flushPending(pending, pendingLength);
+        }
+        return this;
+    }
+
     constructor(opts: BuilderOptions<Binary, TNull>) {
         super(opts);
+        this._offsets = new OffsetsBufferBuilder();
         this._values = new BufferBuilder(new Uint8Array(0));
     }
     public get byteLength(): number {

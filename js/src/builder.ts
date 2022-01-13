@@ -19,7 +19,6 @@ import { Vector } from './vector.js';
 import { Data, makeData } from './data.js';
 import { MapRow, kKeys } from './row/map.js';
 import { createIsValidFunction } from './builder/valid.js';
-import { BuilderType as B } from './interfaces.js';
 import { BufferBuilder, BitmapBufferBuilder, DataBufferBuilder, OffsetsBufferBuilder } from './builder/buffer.js';
 import {
     DataType, strideForType,
@@ -27,7 +26,7 @@ import {
     Date_, Time, Timestamp, Interval,
     Utf8, Binary, List, Map_
 } from './type.js';
-import { newBuilder } from './builder/index.js';
+import { makeBuilder } from './builder/makeBuilder.js';
 
 /**
  * A set of options required to create a `Builder` instance for a given `DataType`.
@@ -111,19 +110,6 @@ export interface IterableBuilderOptions<T extends DataType = any, TNull = any> e
  */
 export abstract class Builder<T extends DataType = any, TNull = any> {
 
-    /**
-     * Create a `Builder` instance based on the `type` property of the supplied `options` object.
-     * @param {BuilderOptions<T, TNull>} options An object with a required `DataType` instance
-     * and other optional parameters to be passed to the `Builder` subclass for the given `type`.
-     *
-     * @typeparam T The `DataType` of the `Builder` to create.
-     * @typeparam TNull The type(s) of values which will be considered null-value sentinels.
-     * @nocollapse
-     */
-    public static new<T extends DataType = any, TNull = any>(options: BuilderOptions<T, TNull>): B<T, TNull> {
-        return newBuilder(options);
-    }
-
     /** @nocollapse */
     // @ts-ignore
     public static throughNode<T extends DataType = any, TNull = any>(options: import('./io/node/builder').BuilderDuplexOptions<T, TNull>): import('stream').Duplex {
@@ -134,64 +120,6 @@ export abstract class Builder<T extends DataType = any, TNull = any> {
     public static throughDOM<T extends DataType = any, TNull = any>(options: import('./io/whatwg/builder').BuilderTransformOptions<T, TNull>): import('./io/whatwg/builder').BuilderTransform<T, TNull> {
         throw new Error(`"throughDOM" not available in this environment`);
     }
-
-    /**
-     * Transform a synchronous `Iterable` of arbitrary JavaScript values into a
-     * sequence of Arrow Vector<T> following the chunking semantics defined in
-     * the supplied `options` argument.
-     *
-     * This function returns a function that accepts an `Iterable` of values to
-     * transform. When called, this function returns an Iterator of `Vector<T>`.
-     *
-     * The resulting `Iterator<Vector<T>>` yields Vectors based on the
-     * `queueingStrategy` and `highWaterMark` specified in the `options` argument.
-     *
-     * * If `queueingStrategy` is `"count"` (or omitted), The `Iterator<Vector<T>>`
-     *   will flush the underlying `Builder` (and yield a new `Vector<T>`) once the
-     *   Builder's `length` reaches or exceeds the supplied `highWaterMark`.
-     * * If `queueingStrategy` is `"bytes"`, the `Iterator<Vector<T>>` will flush
-     *   the underlying `Builder` (and yield a new `Vector<T>`) once its `byteLength`
-     *   reaches or exceeds the supplied `highWaterMark`.
-     *
-     * @param {IterableBuilderOptions<T, TNull>} options An object of properties which determine the `Builder` to create and the chunking semantics to use.
-     * @returns A function which accepts a JavaScript `Iterable` of values to
-     *          write, and returns an `Iterator` that yields Vectors according
-     *          to the chunking semantics defined in the `options` argument.
-     * @nocollapse
-     */
-    public static throughIterable<T extends DataType = any, TNull = any>(options: IterableBuilderOptions<T, TNull>) {
-        return throughIterable({ ['highWaterMark']: Number.POSITIVE_INFINITY, ...options });
-    }
-
-    /**
-     * Transform an `AsyncIterable` of arbitrary JavaScript values into a
-     * sequence of Arrow Vector<T> following the chunking semantics defined in
-     * the supplied `options` argument.
-     *
-     * This function returns a function that accepts an `AsyncIterable` of values to
-     * transform. When called, this function returns an AsyncIterator of `Vector<T>`.
-     *
-     * The resulting `AsyncIterator<Vector<T>>` yields Vectors based on the
-     * `queueingStrategy` and `highWaterMark` specified in the `options` argument.
-     *
-     * * If `queueingStrategy` is `"count"` (or omitted), The `AsyncIterator<Vector<T>>`
-     *   will flush the underlying `Builder` (and yield a new `Vector<T>`) once the
-     *   Builder's `length` reaches or exceeds the supplied `highWaterMark`.
-     * * If `queueingStrategy` is `"bytes"`, the `AsyncIterator<Vector<T>>` will flush
-     *   the underlying `Builder` (and yield a new `Vector<T>`) once its `byteLength`
-     *   reaches or exceeds the supplied `highWaterMark`.
-     *
-     * @param {IterableBuilderOptions<T, TNull>} options An object of properties which determine the `Builder` to create and the chunking semantics to use.
-     * @returns A function which accepts a JavaScript `AsyncIterable` of values
-     *          to write, and returns an `AsyncIterator` that yields Vectors
-     *          according to the chunking semantics defined in the `options`
-     *          argument.
-     * @nocollapse
-     */
-    public static throughAsyncIterable<T extends DataType = any, TNull = any>(options: IterableBuilderOptions<T, TNull>) {
-        return throughAsyncIterable({ ['highWaterMark']: Number.POSITIVE_INFINITY, ...options });
-    }
-
     /**
      * Construct a builder with the given Arrow DataType with optional null values,
      * which will be interpreted as "null" when set or appended to the `Builder`.
@@ -491,14 +419,37 @@ export abstract class VariableWidthBuilder<T extends Binary | Utf8 | List | Map_
 /** @ignore */
 type ThroughIterable<T extends DataType = any, TNull = any> = (source: Iterable<T['TValue'] | TNull>) => IterableIterator<Vector<T>>;
 
-/** @ignore */
-function throughIterable<T extends DataType = any, TNull = any>(options: IterableBuilderOptions<T, TNull>) {
+
+/**
+ * Transform a synchronous `Iterable` of arbitrary JavaScript values into a
+ * sequence of Arrow Vector<T> following the chunking semantics defined in
+ * the supplied `options` argument.
+ *
+ * This function returns a function that accepts an `Iterable` of values to
+ * transform. When called, this function returns an Iterator of `Vector<T>`.
+ *
+ * The resulting `Iterator<Vector<T>>` yields Vectors based on the
+ * `queueingStrategy` and `highWaterMark` specified in the `options` argument.
+ *
+ * * If `queueingStrategy` is `"count"` (or omitted), The `Iterator<Vector<T>>`
+ *   will flush the underlying `Builder` (and yield a new `Vector<T>`) once the
+ *   Builder's `length` reaches or exceeds the supplied `highWaterMark`.
+ * * If `queueingStrategy` is `"bytes"`, the `Iterator<Vector<T>>` will flush
+ *   the underlying `Builder` (and yield a new `Vector<T>`) once its `byteLength`
+ *   reaches or exceeds the supplied `highWaterMark`.
+ *
+ * @param {IterableBuilderOptions<T, TNull>} options An object of properties which determine the `Builder` to create and the chunking semantics to use.
+ * @returns A function which accepts a JavaScript `Iterable` of values to
+ *          write, and returns an `Iterator` that yields Vectors according
+ *          to the chunking semantics defined in the `options` argument.
+ */
+export function throughIterable<T extends DataType = any, TNull = any>(options: IterableBuilderOptions<T, TNull>) {
     const { ['queueingStrategy']: queueingStrategy = 'count' } = options;
     const { ['highWaterMark']: highWaterMark = queueingStrategy !== 'bytes' ? 1000 : 2 ** 14 } = options;
     const sizeProperty: 'length' | 'byteLength' = queueingStrategy !== 'bytes' ? 'length' : 'byteLength';
     return function* (source: Iterable<T['TValue'] | TNull>) {
         let numChunks = 0;
-        const builder = Builder.new(options);
+        const builder = makeBuilder(options);
         for (const value of source) {
             if (builder.append(value)[sizeProperty] >= highWaterMark) {
                 ++numChunks && (yield builder.toVector());
@@ -513,14 +464,38 @@ function throughIterable<T extends DataType = any, TNull = any>(options: Iterabl
 /** @ignore */
 type ThroughAsyncIterable<T extends DataType = any, TNull = any> = (source: Iterable<T['TValue'] | TNull> | AsyncIterable<T['TValue'] | TNull>) => AsyncIterableIterator<Vector<T>>;
 
-/** @ignore */
-function throughAsyncIterable<T extends DataType = any, TNull = any>(options: IterableBuilderOptions<T, TNull>) {
+/**
+ * Transform an `AsyncIterable` of arbitrary JavaScript values into a
+ * sequence of Arrow Vector<T> following the chunking semantics defined in
+ * the supplied `options` argument.
+ *
+ * This function returns a function that accepts an `AsyncIterable` of values to
+ * transform. When called, this function returns an AsyncIterator of `Vector<T>`.
+ *
+ * The resulting `AsyncIterator<Vector<T>>` yields Vectors based on the
+ * `queueingStrategy` and `highWaterMark` specified in the `options` argument.
+ *
+ * * If `queueingStrategy` is `"count"` (or omitted), The `AsyncIterator<Vector<T>>`
+ *   will flush the underlying `Builder` (and yield a new `Vector<T>`) once the
+ *   Builder's `length` reaches or exceeds the supplied `highWaterMark`.
+ * * If `queueingStrategy` is `"bytes"`, the `AsyncIterator<Vector<T>>` will flush
+ *   the underlying `Builder` (and yield a new `Vector<T>`) once its `byteLength`
+ *   reaches or exceeds the supplied `highWaterMark`.
+ *
+ * @param {IterableBuilderOptions<T, TNull>} options An object of properties which determine the `Builder` to create and the chunking semantics to use.
+ * @returns A function which accepts a JavaScript `AsyncIterable` of values
+ *          to write, and returns an `AsyncIterator` that yields Vectors
+ *          according to the chunking semantics defined in the `options`
+ *          argument.
+ * @nocollapse
+ */
+export function throughAsyncIterable<T extends DataType = any, TNull = any>(options: IterableBuilderOptions<T, TNull>) {
     const { ['queueingStrategy']: queueingStrategy = 'count' } = options;
     const { ['highWaterMark']: highWaterMark = queueingStrategy !== 'bytes' ? 1000 : 2 ** 14 } = options;
     const sizeProperty: 'length' | 'byteLength' = queueingStrategy !== 'bytes' ? 'length' : 'byteLength';
     return async function* (source: Iterable<T['TValue'] | TNull> | AsyncIterable<T['TValue'] | TNull>) {
         let numChunks = 0;
-        const builder = Builder.new(options);
+        const builder = makeBuilder(options);
         for await (const value of source) {
             if (builder.append(value)[sizeProperty] >= highWaterMark) {
                 ++numChunks && (yield builder.toVector());

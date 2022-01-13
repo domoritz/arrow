@@ -72,7 +72,7 @@ export {
     Message,
     RecordBatch,
     util,
-    Builder,
+    Builder, makeBuilder,
     BinaryBuilder,
     BoolBuilder,
     DateBuilder, DateDayBuilder, DateMillisecondBuilder,

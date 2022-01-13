@@ -24,7 +24,6 @@ import { validateRecordBatchIterator } from '../validate.js';
 
 import type { RecordBatchStreamWriterOptions } from 'apache-arrow/ipc/writer';
 import {
-    Builder,
     Dictionary,
     Field,
     Int32,
@@ -36,6 +35,7 @@ import {
     Uint32,
     Vector
 } from 'apache-arrow';
+import { throughIterable } from 'apache-arrow/builder.js';
 
 describe('RecordBatchStreamWriter', () => {
 
@@ -90,7 +90,7 @@ describe('RecordBatchStreamWriter', () => {
         } = generate.dictionary(1000, 20, new Uint32(), new Int32());
 
         const writer = RecordBatchStreamWriter.writeAll((function* () {
-            const transform = Builder.throughIterable({
+            const transform = throughIterable({
                 type: sourceVector.type, nullValues: [null],
                 queueingStrategy: 'count', highWaterMark: 50,
             });
